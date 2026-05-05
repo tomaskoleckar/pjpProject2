@@ -3,15 +3,17 @@ namespace pjpProject;
 public class TypeChecker
 {
     private readonly Dictionary<string, VarType> _vars = new();
+    private readonly Dictionary<string, int> _forVars = new();
     private readonly Dictionary<string, ProcDecl> _procs = new();
     private readonly List<string> _errors = new();
+    private int forNumber = 1;
     private bool _inProc = false;
+    private bool _inFor = false;
 
     public List<string> Errors => _errors;
 
     public void Check(Program program)
     {
-        // first pass: register all proc names so forward calls are valid
         foreach (var p in program.Procs)
         {
             if (_procs.ContainsKey(p.Name))
@@ -20,10 +22,8 @@ public class TypeChecker
                 _procs[p.Name] = p;
         }
 
-        // check main statements
         foreach (var s in program.Stmts) CheckStmt(s);
 
-        // check procedure bodies
         foreach (var p in program.Procs)
         {
             _inProc = true;
@@ -49,7 +49,10 @@ public class TypeChecker
                     if (_vars.ContainsKey(name))
                         _errors.Add($"Line {d.Line}: variable '{name}' already declared");
                     else
+                        
                         _vars[name] = d.VType;
+                        if(_inFor)
+                            _forVars[name] = forNumber;
                 }
                 break;
 
@@ -61,6 +64,10 @@ public class TypeChecker
                 foreach (var name in r.Names)
                 {
                     if (!_vars.ContainsKey(name))
+                        _errors.Add($"Line {r.Line}: undeclared variable '{name}'");
+                    if(!_inFor && _forVars.ContainsKey(name))
+                        _errors.Add($"Line {r.Line}: undeclared variable '{name}'");
+                    if(_inFor && _forVars[name] != forNumber)
                         _errors.Add($"Line {r.Line}: undeclared variable '{name}'");
                 }
                 break;
@@ -91,6 +98,30 @@ public class TypeChecker
                 CheckStmt(w.Body);
                 break;
             }
+
+            case ForStmt f:
+            {
+                int startLabel = NewLabel();
+                int endLabel   = NewLabel();
+                GenStmt(f.Init);
+
+                Emit($"label {startLabel}");
+                GenExpr(f.Cond);
+                Emit($"fjmp {endLabel}");
+                foreach (var bodyStmt in f.Body) 
+                {
+                    GenStmt(bodyStmt);
+                }
+                GenExpr(f.Step);
+                Emit("pop");
+                Emit($"jmp {startLabel}");
+                Emit($"label {endLabel}");
+                forNumber++;
+                break;
+            }
+            
+
+        
 
             case CallStmt c:
                 if (!_procs.ContainsKey(c.Name))

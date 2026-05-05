@@ -92,6 +92,18 @@ public class CodeGen
                 Emit($"label {endLabel}");
                 break;
             }
+            case ForStmt f:
+            {
+                int startLabel = NewLabel();
+                int endLabel   = NewLabel();
+                Emit($"label {startLabel}");
+                GenExpr(w.Cond);
+                Emit($"fjmp {endLabel}");
+                GenStmt(w.Body);
+                Emit($"jmp {startLabel}");
+                Emit($"label {endLabel}");
+                break;
+            }
 
             case CallStmt c:
                 foreach (var ps in _procs[c.Name].Body) GenStmt(ps);

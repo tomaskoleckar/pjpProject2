@@ -68,8 +68,19 @@ public class AstBuilder : LanguageBaseVisitor<object?>
     public override object? VisitWhileStmt(LanguageParser.WhileStmtContext ctx)
     {
         var cond = (Expr)Visit(ctx.expr())!;
-        var body = (Stmt)Visit(ctx.statement())!;
-        return new WhileStmt(cond, body, ctx.Start.Line);
+        var body = ctx.statement().Select(s => (Stmt)Visit(s)!).ToList();
+        return new ForStmt(cond, body, ctx.Start.Line);
+    }
+
+    public override object? VisitForStmt(LanguageParser.ForStmtContext ctx)
+    {
+        var init = (Stmt)Visit(ctx.statement(0))!;
+        var cond = (Expr)Visit(ctx.expr(0))!;
+        var step = (Expr)Visit(ctx.expr(1))!;
+        
+        var body = ctx.statement().Skip(1).Select(s => (Stmt)Visit(s)!).ToList();
+
+        return new ForStmt(init, cond, step, body, ctx.Start.Line);
     }
 
     public override object? VisitCallStmt(LanguageParser.CallStmtContext ctx)

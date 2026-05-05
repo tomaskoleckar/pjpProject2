@@ -16,6 +16,7 @@ public record WriteStmt(List<Expr> Exprs, int Line) : Stmt(Line);
 public record BlockStmt(List<Stmt> Stmts, int Line) : Stmt(Line);
 public record IfStmt(Expr Cond, Stmt Then, Stmt? Else, int Line) : Stmt(Line);
 public record WhileStmt(Expr Cond, Stmt Body, int Line) : Stmt(Line);
+public record ForStmt(Stmt Init, Expr Cond, Expr Step, List<Stmt> Body, int Line) : Stmt(Line);
 public record CallStmt(string Name, int Line) : Stmt(Line);
 
 // Expressions

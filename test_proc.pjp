@@ -1,11 +1,6 @@
-int x;
-x = 5;
-
-procedure greet() {
-    write "hello from proc";
-    write x;
+int a;
+for(a = 1;a<10;a=a+1){
+    int b;
+    write a;
+    b = 1;
 }
-
-greet();
-x = 10;
-greet();

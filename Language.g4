@@ -18,6 +18,7 @@ statement
     | '{' statement* '}'                                    # blockStmt
     | IF '(' expr ')' statement (ELSE statement)?           # ifStmt
     | WHILE '(' expr ')' statement                          # whileStmt
+    | FOR '(' statement ';' expr ';' expr ')' '{' statement* '}' # forStmt   
     | ID '(' ')' ';'                                        # callStmt
     ;
 
@@ -27,7 +28,7 @@ expr
     : '-' expr                                              # unaryMinusExpr
     | '!' expr                                              # notExpr
     | expr ('*' | '/' | '%') expr                           # mulExpr
-    | expr ('+' | '-' | '.') expr                           # addExpr
+    | expr ('+' | '-' | '.') expr                            # addExpr
     | expr ('<' | '>') expr                                 # relExpr
     | expr ('==' | '!=') expr                               # eqExpr
     | expr '&&' expr                                        # andExpr
@@ -52,6 +53,7 @@ WRITE  : 'write' ;
 IF     : 'if' ;
 ELSE   : 'else' ;
 WHILE  : 'while' ;
+FOR    : 'for'  ;
 
 BOOL_LIT : 'true' | 'false' ;
 
