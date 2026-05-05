@@ -1,0 +1,18 @@
+push I 0
+save x
+push I 5
+save x
+load x
+pop
+push S "hello from proc"
+print 1
+load x
+print 1
+push I 10
+save x
+load x
+pop
+push S "hello from proc"
+print 1
+load x
+print 1

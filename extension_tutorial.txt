@@ -1,0 +1,423 @@
+LANGUAGE EXTENSION TUTORIAL
+============================
+How to add new features to the compiler pipeline.
+Pipeline order: Grammar -> AST -> AstBuilder -> TypeChecker -> CodeGen -> Interpreter
+
+Each feature follows the same pattern. When in doubt: grammar enforces structure,
+typechecker enforces semantics, codegen emits instructions, interpreter executes them.
+
+================================================================================
+REFERENCE: PROCEDURES (already implemented - use as template)
+================================================================================
+
+WHAT WE DID:
+  Grammar    : added topLevel rule, procDecl, callStmt (ID '(' ')' ';')
+  AST        : added Program record, ProcDecl record, CallStmt record
+  AstBuilder : BuildProgram returns Program, added VisitProcDecl, VisitCallStmt
+  TypeChecker: _procs dict, Check(Program), _inProc flag, CallStmt check
+  CodeGen    : _procs dict, Generate(Program), CallStmt inlines body
+  Interpreter: no changes needed (inlining = no new instructions)
+
+KEY DECISIONS:
+  - procDecl separate from statement (grammar prevents nesting structurally)
+  - inlining instead of call/ret (assignment only allows jmp/fjmp)
+  - two-pass in TypeChecker (register all procs first -> forward calls work)
+
+================================================================================
+FEATURE 1: STATIC ARRAYS
+================================================================================
+
+SYNTAX:
+  int a[5];           // declaration, size must be integer literal
+  a[i] = expr;        // write (new array-assign statement)
+  x = a[i];           // read (array access expression)
+
+NEW INSTRUCTIONS:
+  newarray id n       // allocate array named 'id' with n slots (default values)
+  aload id            // pop index from stack, push a[index]
+  astore id           // pop value, pop index, store a[index] = value
+
+--- STEP 1: Grammar (Language.g4) ---
+
+Add array declaration as new statement alternative:
+  | type ID '[' INT_LIT ']' (',' ID '[' INT_LIT ']')* ';'   # arrayDeclStmt
+
+Add array element assignment as new statement alternative:
+  | ID '[' expr ']' '=' expr ';'                             # arrayAssignStmt
+
+Add array access as new expression alternative (put before ID rule):
+  | ID '[' expr ']'                                          # arrayAccessExpr
+
+Regenerate ANTLR after grammar change:
+  java -jar antlr4-complete.jar -Dlanguage=CSharp -visitor -no-listener Language.g4
+
+--- STEP 2: AST (Ast.cs) ---
+
+Add new nodes:
+
+  // single entry in array decl: name + size
+  public record ArrayEntry(string Name, int Size);
+
+  // declaration: int a[5], b[3];
+  public record ArrayDeclStmt(VarType VType, List<ArrayEntry> Arrays, int Line) : Stmt(Line);
+
+  // a[i] = expr;
+  public record ArrayAssignStmt(string Name, Expr Index, Expr Value, int Line) : Stmt(Line);
+
+  // a[i] as expression (rvalue)
+  public record ArrayAccessExpr(string Name, Expr Index, int Line) : Expr(Line);
+
+--- STEP 3: AstBuilder (AstBuilder.cs) ---
+
+Add three visitor methods:
+
+  public override object? VisitArrayDeclStmt(LanguageParser.ArrayDeclStmtContext ctx)
+  {
+      var vtype   = GetVarType(ctx.type());
+      var ids     = ctx.ID().Select(id => id.GetText()).ToList();
+      var sizes   = ctx.INT_LIT().Select(n => int.Parse(n.GetText())).ToList();
+      var entries = ids.Zip(sizes, (n, s) => new ArrayEntry(n, s)).ToList();
+      return new ArrayDeclStmt(vtype, entries, ctx.Start.Line);
+  }
+
+  public override object? VisitArrayAssignStmt(LanguageParser.ArrayAssignStmtContext ctx)
+  {
+      var name  = ctx.ID().GetText();
+      var index = (Expr)Visit(ctx.expr(0))!;
+      var value = (Expr)Visit(ctx.expr(1))!;
+      return new ArrayAssignStmt(name, index, value, ctx.Start.Line);
+  }
+
+  public override object? VisitArrayAccessExpr(LanguageParser.ArrayAccessExprContext ctx)
+  {
+      var name  = ctx.ID().GetText();
+      var index = (Expr)Visit(ctx.expr())!;
+      return new ArrayAccessExpr(name, index, ctx.Start.Line);
+  }
+
+--- STEP 4: TypeChecker (TypeChecker.cs) ---
+
+Add array tracking dict alongside _vars:
+  private readonly Dictionary<string, (VarType ElemType, int Size)> _arrays = new();
+
+Add public accessor for CodeGen to query array element type:
+  public (VarType ElemType, int Size) GetArrayInfo(string name) => _arrays[name];
+
+Add ArrayDeclStmt case in CheckStmt:
+  case ArrayDeclStmt d:
+      if (_inProc)
+      {
+          _errors.Add($"Line {d.Line}: array declaration not allowed inside procedure");
+          break;
+      }
+      foreach (var entry in d.Arrays)
+      {
+          if (_arrays.ContainsKey(entry.Name) || _vars.ContainsKey(entry.Name))
+              _errors.Add($"Line {d.Line}: '{entry.Name}' already declared");
+          else if (entry.Size <= 0)
+              _errors.Add($"Line {d.Line}: array size must be positive");
+          else
+              _arrays[entry.Name] = (d.VType, entry.Size);
+      }
+      break;
+
+Add ArrayAssignStmt case in CheckStmt:
+  case ArrayAssignStmt a:
+      if (!_arrays.TryGetValue(a.Name, out var info))
+          _errors.Add($"Line {a.Line}: '{a.Name}' is not a declared array");
+      else
+      {
+          var idxType = InferType(a.Index);
+          if (idxType != VarType.Int)
+              _errors.Add($"Line {a.Line}: array index must be int");
+          var valType = InferType(a.Value);
+          if (valType != null && !Compatible(info.ElemType, valType.Value, out _))
+              _errors.Add($"Line {a.Line}: cannot store {valType} in {info.ElemType} array");
+      }
+      break;
+
+Add ArrayAccessExpr case in InferType:
+  case ArrayAccessExpr a:
+      if (!_arrays.TryGetValue(a.Name, out var info))
+      {
+          _errors.Add($"Line {a.Line}: '{a.Name}' is not a declared array");
+          return null;
+      }
+      var idxType = InferType(a.Index);
+      if (idxType != VarType.Int)
+          _errors.Add($"Line {a.Line}: array index must be int");
+      return info.ElemType;
+
+--- STEP 5: CodeGen (CodeGen.cs) ---
+
+Add ArrayDeclStmt case in GenStmt:
+  case ArrayDeclStmt d:
+      foreach (var entry in d.Arrays)
+          Emit($"newarray {entry.Name} {entry.Size}");
+      break;
+
+Add ArrayAssignStmt case in GenStmt:
+  case ArrayAssignStmt a:
+      GenExpr(a.Index);
+      GenExpr(a.Value);
+      var (lType, _) = _tc.GetArrayInfo(a.Name);
+      var rType = _tc.InferType(a.Value);
+      if (rType == VarType.Int && lType == VarType.Float) Emit("itof");
+      Emit($"astore {a.Name}");
+      break;
+
+Add ArrayAccessExpr case in GenExpr:
+  case ArrayAccessExpr a:
+      GenExpr(a.Index);
+      Emit($"aload {a.Name}");
+      break;
+
+--- STEP 6: Interpreter (Interpreter.cs) ---
+
+Add array storage field:
+  private readonly Dictionary<string, object[]> _arrays = new();
+
+Also clear it in Run() before execution:
+  _arrays.Clear();
+
+Add newarray case:
+  case "newarray":
+  {
+      string name = parts[1];
+      int size    = int.Parse(parts[2]);
+      // default values will be filled by first astore; pre-fill with 0/false/""
+      _arrays[name] = new object[size];
+      for (int i = 0; i < size; i++) _arrays[name][i] = 0; // type-neutral default
+      break;
+  }
+
+Add aload case:
+  case "aload":
+  {
+      int idx = (int)_stack.Pop();
+      _stack.Push(_arrays[parts[1]][idx]);
+      break;
+  }
+
+Add astore case:
+  case "astore":
+  {
+      var val = _stack.Pop();
+      int idx = (int)_stack.Pop();
+      _arrays[parts[1]][idx] = val;
+      break;
+  }
+
+NOTE: astore pops value first, then index. So in CodeGen emit index THEN value (index pushed
+first, value pushed second -> value is on top -> popped first). Match the emit order to this.
+
+================================================================================
+FEATURE 2: FILE TYPE
+================================================================================
+
+SYNTAX:
+  FILE f;                      // declaration, initialized to null/closed
+  f = fopen("soubor.txt");     // open file, assign handle to f
+  fwrite(f, expr);             // write value to file
+  fclose(f);                   // close file
+
+TARGET INSTRUCTIONS (as shown in assignment):
+  push S "soubor.txt"
+  open                         // pop filename string, push FILE handle
+  save f
+
+  load f
+  <expr>
+  fwrite                       // pop value, pop handle, write to file
+
+  load f
+  fclose                       // pop handle, close file
+
+--- STEP 1: Grammar (Language.g4) ---
+
+Add FILE keyword and type:
+  FILE   : 'FILE' ;            // add to Keywords section
+  Add 'FILE' alternative to the type rule:
+    type : INT | FLOAT | BOOL | STRING | FILE ;
+
+Add fopen as expression (so f = fopen("x.txt"); works as assignment):
+  | FOPEN '(' expr ')'         # fopenExpr
+
+Add fwrite and fclose as statements:
+  | FWRITE '(' expr ',' expr ')' ';'   # fwriteStmt
+  | FCLOSE '(' expr ')' ';'            # fcloseStmt
+
+Add keywords:
+  FOPEN  : 'fopen'  ;
+  FWRITE : 'fwrite' ;
+  FCLOSE : 'fclose' ;
+
+Regenerate ANTLR after this change.
+
+--- STEP 2: AST (Ast.cs) ---
+
+Add File to VarType enum:
+  public enum VarType { Int, Float, Bool, String, File }
+
+Add new nodes:
+  public record FwriteStmt(Expr Handle, Expr Value, int Line) : Stmt(Line);
+  public record FcloseStmt(Expr Handle, int Line) : Stmt(Line);
+  public record FopenExpr(Expr Filename, int Line) : Expr(Line);
+
+No need for a separate FopenStmt - fopen is an expression so:
+  f = fopen("x.txt");   parses as AssignExpr where Value is FopenExpr.
+
+--- STEP 3: AstBuilder (AstBuilder.cs) ---
+
+GetVarType helper - add FILE case:
+  "FILE" => VarType.File,
+
+Add visitor methods:
+  public override object? VisitFopenExpr(LanguageParser.FopenExprContext ctx)
+      => new FopenExpr((Expr)Visit(ctx.expr())!, ctx.Start.Line);
+
+  public override object? VisitFwriteStmt(LanguageParser.FwriteStmtContext ctx)
+  {
+      var handle = (Expr)Visit(ctx.expr(0))!;
+      var value  = (Expr)Visit(ctx.expr(1))!;
+      return new FwriteStmt(handle, value, ctx.Start.Line);
+  }
+
+  public override object? VisitFcloseStmt(LanguageParser.FcloseStmtContext ctx)
+      => new FcloseStmt((Expr)Visit(ctx.expr())!, ctx.Start.Line);
+
+--- STEP 4: TypeChecker (TypeChecker.cs) ---
+
+Add FwriteStmt case in CheckStmt:
+  case FwriteStmt fw:
+  {
+      var ht = InferType(fw.Handle);
+      if (ht != null && ht != VarType.File)
+          _errors.Add($"Line {fw.Line}: fwrite first argument must be FILE");
+      InferType(fw.Value);   // any type is ok to write
+      break;
+  }
+
+Add FcloseStmt case in CheckStmt:
+  case FcloseStmt fc:
+  {
+      var ht = InferType(fc.Handle);
+      if (ht != null && ht != VarType.File)
+          _errors.Add($"Line {fc.Line}: fclose argument must be FILE");
+      break;
+  }
+
+Add FopenExpr case in InferType:
+  case FopenExpr fo:
+  {
+      var t = InferType(fo.Filename);
+      if (t != null && t != VarType.String)
+          _errors.Add($"Line {fo.Line}: fopen argument must be string");
+      return VarType.File;
+  }
+
+Also: FILE variables cannot be used in arithmetic, comparison, etc.
+The existing CheckBinop will reject FILE operands automatically since none
+of the operator cases handle VarType.File.
+
+For AssignExpr with FILE: the Compatible() method needs to allow File = File.
+It already handles same-type assignment, so File = File (fopen result) works.
+
+--- STEP 5: CodeGen (CodeGen.cs) ---
+
+Add FwriteStmt case in GenStmt:
+  case FwriteStmt fw:
+      GenExpr(fw.Handle);
+      GenExpr(fw.Value);
+      Emit("fwrite");
+      break;
+
+Add FcloseStmt case in GenStmt:
+  case FcloseStmt fc:
+      GenExpr(fc.Handle);
+      Emit("fclose");
+      break;
+
+Add FopenExpr case in GenExpr:
+  case FopenExpr fo:
+      GenExpr(fo.Filename);
+      Emit("open");
+      break;
+
+FILE variables work with existing save/load instructions - the interpreter
+stores the handle as an object on the data stack and in _vars like any other value.
+
+TypeCode helper: add File case (not needed for arithmetic but add for completeness):
+  VarType.File => "FILE",
+
+--- STEP 6: Interpreter (Interpreter.cs) ---
+
+Add file handle storage:
+  private readonly Dictionary<int, StreamWriter> _fileHandles = new();
+  private int _nextHandle = 1;
+
+Clear in Run():
+  foreach (var f in _fileHandles.Values) f.Close();
+  _fileHandles.Clear();
+  _nextHandle = 1;
+
+Add open case:
+  case "open":
+  {
+      string filename = (string)_stack.Pop();
+      var writer = new StreamWriter(filename, append: false);
+      int handle = _nextHandle++;
+      _fileHandles[handle] = writer;
+      _stack.Push(handle);   // push int handle; stored in FILE variable via save
+      break;
+  }
+
+Add fwrite case:
+  case "fwrite":
+  {
+      var val    = _stack.Pop();
+      int handle = (int)_stack.Pop();
+      _fileHandles[handle].WriteLine(FormatValue(val));
+      _fileHandles[handle].Flush();
+      break;
+  }
+
+Add fclose case:
+  case "fclose":
+  {
+      int handle = (int)_stack.Pop();
+      if (_fileHandles.TryGetValue(handle, out var w))
+      {
+          w.Close();
+          _fileHandles.Remove(handle);
+      }
+      break;
+  }
+
+NOTE: FILE variables are just ints (handle IDs) at runtime. The FILE type only
+exists at the source language and type-checker level. The interpreter doesn't
+care about types - it just executes instructions.
+
+================================================================================
+GENERAL EXTENSION CHECKLIST
+================================================================================
+
+For any new feature:
+
+  [ ] Grammar: add rule, regenerate ANTLR
+        java -jar antlr4-complete.jar -Dlanguage=CSharp -visitor -no-listener Language.g4
+  [ ] AST: add record(s) - Stmt or Expr subtype
+  [ ] AstBuilder: add Visit method(s) matching grammar rule names
+  [ ] TypeChecker: handle new nodes in CheckStmt or InferType
+  [ ] CodeGen: handle new nodes in GenStmt or GenExpr, emit new instructions
+  [ ] Interpreter: handle new instruction strings in Execute switch
+  [ ] Build: dotnet build - fix errors before moving to next file
+  [ ] Test: write a .pjp file, run with --run-after, inspect .code output
+
+COMMON MISTAKES:
+  - Forgot to regenerate ANTLR after grammar change -> visitor method names wrong
+  - Variable name conflict in switch cases (use different local names)
+  - Stack order wrong for binary instructions (push left first, then right)
+  - astore: CodeGen pushes index then value; Interpreter pops value first then index
+  - New instruction not handled in Interpreter -> "Unknown instruction" at runtime
+  - New VarType not handled in TypeCode() in CodeGen -> wrong instruction suffix emitted

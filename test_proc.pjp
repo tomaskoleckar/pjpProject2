@@ -1,0 +1,11 @@
+int x;
+x = 5;
+
+procedure greet() {
+    write "hello from proc";
+    write x;
+}
+
+greet();
+x = 10;
+greet();

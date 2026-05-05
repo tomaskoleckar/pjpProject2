@@ -1,0 +1,17 @@
+D:\VisualStudioProjects\VSCode\pjpProject\obj\Debug\net8.0\pjpProject.csproj.AssemblyReference.cache
+D:\VisualStudioProjects\VSCode\pjpProject\obj\Debug\net8.0\pjpProject.GeneratedMSBuildEditorConfig.editorconfig
+D:\VisualStudioProjects\VSCode\pjpProject\obj\Debug\net8.0\pjpProject.AssemblyInfoInputs.cache
+D:\VisualStudioProjects\VSCode\pjpProject\obj\Debug\net8.0\pjpProject.AssemblyInfo.cs
+D:\VisualStudioProjects\VSCode\pjpProject\obj\Debug\net8.0\pjpProject.csproj.CoreCompileInputs.cache
+D:\VisualStudioProjects\VSCode\pjpProject\bin\Debug\net8.0\pjpProject.exe
+D:\VisualStudioProjects\VSCode\pjpProject\bin\Debug\net8.0\pjpProject.deps.json
+D:\VisualStudioProjects\VSCode\pjpProject\bin\Debug\net8.0\pjpProject.runtimeconfig.json
+D:\VisualStudioProjects\VSCode\pjpProject\bin\Debug\net8.0\pjpProject.dll
+D:\VisualStudioProjects\VSCode\pjpProject\bin\Debug\net8.0\pjpProject.pdb
+D:\VisualStudioProjects\VSCode\pjpProject\bin\Debug\net8.0\Antlr4.Runtime.Standard.dll
+D:\VisualStudioProjects\VSCode\pjpProject\obj\Debug\net8.0\pjpProject.csproj.Up2Date
+D:\VisualStudioProjects\VSCode\pjpProject\obj\Debug\net8.0\pjpProject.dll
+D:\VisualStudioProjects\VSCode\pjpProject\obj\Debug\net8.0\refint\pjpProject.dll
+D:\VisualStudioProjects\VSCode\pjpProject\obj\Debug\net8.0\pjpProject.pdb
+D:\VisualStudioProjects\VSCode\pjpProject\obj\Debug\net8.0\pjpProject.genruntimeconfig.cache
+D:\VisualStudioProjects\VSCode\pjpProject\obj\Debug\net8.0\ref\pjpProject.dll
